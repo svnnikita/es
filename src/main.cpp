@@ -1,17 +1,20 @@
 #include <libopencm3/stm32/rcc.h>   // reset and clock contol
 #include <libopencm3/stm32/gpio.h>  // general purpose input-output
+#include <libopencm3/stm32/timer.h>   // timers
 
-class Rcc {
-public:
-    Rcc () {
-        rcc_clock_setup_pll(&rcc_hse_16mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
-    };
-};
+// class Rcc {
+// public:
+//     Rcc () {
+//         rcc_clock_setup_pll(&rcc_hse_16mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
+//     };
+// };
 
-Rcc clock_system;
+// Rcc clock_system;
 
 //==============================================================================
 int main() {
+    rcc_periph_clock_enable(RCC_GPIOD);
+   
     gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO15);
 
     rcc_periph_clock_enable(RCC_TIM6);
@@ -20,7 +23,11 @@ int main() {
     timer_enable_counter(TIM6);
 
     while (true) {
-        gpio_toggle(GPIOD, GPIO15);
-        for (volatile uint32_t i = 0; i < 2'000'000; ++i);   // апострофы - разделение числа на разряды
+        if (timer_get_counter(TIM6) < 500) {
+            gpio_set(GPIOD, GPIO15);
+        }
+        else {
+            gpio_clear(GPIOD, GPIO15);
+        }
     }
 }

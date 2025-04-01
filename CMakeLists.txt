@@ -10,7 +10,7 @@ set(DEVICE stm32f407vg)
 
 #================================================================================
 
-add_subdirectory(src)
+add_subdirectory(src)   
 
 add_subdirectory(libs)
 
