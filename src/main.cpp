@@ -1,38 +1,108 @@
-#include <libopencm3/stm32/rcc.h>   // reset and clock contol
-#include <libopencm3/stm32/gpio.h>  // general purpose input-output
-#include <libopencm3/stm32/timer.h>   // timers
+// Модуль функций для управления тактированием:
+#include <libopencm3/stm32/rcc.h>
+
+// Настройка выводов GPIO:
+#include <libopencm3/stm32/gpio.h>
+
+// Модуль для работы с таймерами (предделители, режимы счетчиков, прерывания):
+#include <libopencm3/stm32/timer.h>
+
+// NVIC — это контроллер вложенных векторизованных прерываний, встроенный 
+// в ядро Cortex-M. Он управляет всеми прерываниями и исключениями в микроконтроллере.
 #include <libopencm3/cm3/nvic.h>
 
-// class Rcc {
-// public:
-//     Rcc () {
-//         rcc_clock_setup_pll(&rcc_hse_16mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
-//     };
-// };
+/*  ЗАДАНИЕ
+    1. Настроить режиме PWM1 в канале 4 таймера 4
+    1.1. Увеличить частоту сигнала на выходе таймера 4 в 100 раз. (За счет делителя)
+    2. Настроить таймер 6 на переполнение каждые 5 секунд.
+    3. Связать переполнение таймера 6 с обновлением (программно) регистра сравнения таймера 4.
+    4. Увеличивать содержимое регистра сравнения на 100 при каждом обновлении таймера 6.
+    5. При достижении предела счета таймера 4 (1000) перейти к величине сравнения 100.
+*/
 
-// Rcc clock_system;
+/*  TIM4 отвечает за генерацию PWM. TIM4 занят генерацией PWM и не может одновременно 
+    использоваться для отсчета временных интервалов.
+    TIM6 отвечает за временные интервалы, в которые PWM модифицируется.
+    Это позволяет не блокировать основной цикл программы (while (true)) и работать асинхронно.
+*/
 
-//==============================================================================
-int main() {
-    rcc_periph_clock_enable(RCC_GPIOD);
+// При объявлении констант важно учитывать разрядность счётчиков!
+constexpr uint16_t timer6_clock_freq_hz{1000};  // Период тактирования таймера 6
+constexpr uint16_t step_interval_ms{2000};      // Шаг времени, с которым изменяется яркость
+
+// Функция настройки широтно-импульсной модуляции:
+void pwm_setup(void) {
+
+    // Включение тактирования порта D
+    rcc_periph_clock_enable(RCC_GPIOD);  
+    
+    // Функция gpio_mode_setup из библиотеки libopencm3 используется 
+    // для настройки режима работы GPIO-пина микроконтроллера STM32.
+    gpio_mode_setup(GPIOD, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO15);
+
+    // Режим альтернативной функции AF у пина GPIO означает, что пин
+    // будет управляться не программно (как обычный вход/выход), а 
+    // периферийным модулем микроконтроллера (таймером)
+    gpio_set_af(GPIOD, GPIO_AF2, GPIO15);
+
+    // Включение тактирования TIM4
+    rcc_periph_clock_enable(RCC_TIM4);
+
+    // Предделитель для TIM4 -- делит исходную тактовую частоту таймера, чтобы замедлить его счет
+    timer_set_prescaler(TIM4, 8000 - 1);
+
+    // Период счета -- таймер считает от 0 до 999, затем перезапускается
+    timer_set_period(TIM4, 1000 - 1);  
+    
+    // Настройка канала 4 TIM4 в режиме PWM1
+    timer_set_oc_mode(TIM4, TIM_OC4, TIM_OCM_PWM1);
+
+    // Начальное значение сравнения (0% заполнение)
+    timer_set_oc_value(TIM4, TIM_OC4, 0);  
+
+    // Включение выхода канала 4
+    timer_enable_oc_output(TIM4, TIM_OC4);
+
+    // Запуск таймера
+    timer_enable_counter(TIM4);
+
+
+    // Включение тактирования TIM6. Прерывание каждые 2 СЕКУНДЫ
     rcc_periph_clock_enable(RCC_TIM6);
-   
-    gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO15);
 
-    timer_set_prescaler(TIM6, 8000 - 1);
-    timer_set_period(TIM6, 250 - 1);
+    // Предделитель для TIM6:
+    // rcc_get_timer_clk_freq(TIM6) / 1000 - 1 для частоты 1 кГц
+    timer_set_prescaler(TIM6, rcc_get_timer_clk_freq(TIM6)/timer6_clock_freq_hz - 1);
 
-    timer_enable_counter(TIM6);
+    timer_set_period(TIM6, step_interval_ms - 1);
 
+    // Разрешение прерывания по переполнению
     timer_enable_irq(TIM6, TIM_DIER_UIE);
+
+    // Активация прерывания в NVIC
     nvic_enable_irq(NVIC_TIM6_DAC_IRQ);
 
-    while (true) {
-        
-    }
+    // Запуск таймера
+    timer_enable_counter(TIM6);
 }
 
-void tim6_dac_isr (void) {
+int main() {
+    pwm_setup();
+    while(true) {}
+}
+
+// Настройка PWM (Pulse Width Modulation) и таймеров.
+// При помощи этой функции светодиод плавно меняет яркость
+void tim6_dac_isr(void) {
+
+    static uint16_t val(100);
+
+    // Сбрасываем флаг переполнения таймера
     timer_clear_flag(TIM6, TIM_SR_UIF);
-    gpio_toggle(GPIOD, GPIO15);
+
+    if (val >= 900) val = 100;
+    else val += 100;
+
+    // Устанавливаем новое значение, которое определяет скважность PWM
+    timer_set_oc_value(TIM4, TIM_OC4, val);
 }
