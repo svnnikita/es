@@ -1,14 +1,13 @@
+#include "circular_buffer.hpp"
+
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/cm3/nvic.h>
 
+
 int main() {
-    constexpr uint8_t SIZE{8}; // Размер буфера
-    uint8_t buffer[SIZE];
-    volatile uint8_t wr_idx;
-    volatile uint8_t rd_idx;
-    bool full{false};
+    Circular_buffer b;
 
     rcc_periph_clock_enable(RCC_GPIOA);
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO2|GPIO3);
@@ -28,19 +27,22 @@ int main() {
 
     while(true) {
 
-        if (usart_get_flag(USART2, USART_SR_RXNE)) {
-            uint16_t data = usart_recv(USART2);
+        if (usart_get_flag(USART2, USART_SR_RXNE) and (not b.full())) {
+            b.put(static_cast<uint8_t>(usart_recv(USART2)));
+        }
+
+        if (not b.empty()) usart_send_blocking(USART2, b.get());
+            // uint16_t data = usart_recv(USART2);
         
 
-            if (!full) {
-                buffer[wr_idx] = static_cast<uint8_t>(data);
-                usart_send_blocking(USART2, buffer[wr_idx]);
+            // if (!full) {
+            //     buffer[wr_idx] = static_cast<uint8_t>(data);
+            //     usart_send_blocking(USART2, buffer[wr_idx]);
 
-                wr_idx++;
-                wr_idx %= SIZE;
+            //     wr_idx++;
+            //     wr_idx %= SIZE;
 
-                if (wr_idx == rd_idx) full = true;
-            }
+            //     if (wr_idx == rd_idx) full = true;
+            // }
         }
-    }
 }
