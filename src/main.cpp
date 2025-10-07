@@ -1,48 +1,110 @@
-#include "circular_buffer.hpp"
-
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
-#include <libopencm3/stm32/usart.h>
+#include <libopencm3/stm32/timer.h>
+#include <libopencm3/stm32/adc.h>
 #include <libopencm3/cm3/nvic.h>
 
+// Прототипы функций
+void pwm_setup(void);
+void adc_setup(void);
+uint16_t read_adc(void);
 
-int main() {
-    Circular_buffer b;
-
-    rcc_periph_clock_enable(RCC_GPIOA);
-    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO2|GPIO3);
-    gpio_set_af(GPIOA, GPIO_AF7, GPIO2|GPIO3);
-
+int main(void) {
+    // Настройка тактовой частоты
+    rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
     
-    rcc_periph_clock_enable(RCC_USART2);
-
-    usart_set_baudrate(USART2, 115200);
-    usart_set_databits(USART2, 8);
-    usart_set_parity(USART2, USART_PARITY_NONE);
-    usart_set_stopbits(USART2, USART_STOPBITS_1);
-
-    usart_set_mode(USART2, USART_MODE_TX_RX);
-    usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
-    usart_enable(USART2);
-
-    while(true) {
-
-        if (usart_get_flag(USART2, USART_SR_RXNE) and (not b.full())) {
-            b.put(static_cast<uint8_t>(usart_recv(USART2)));
-        }
-
-        if (not b.empty()) usart_send_blocking(USART2, b.get());
-            // uint16_t data = usart_recv(USART2);
+    // Настройка ШИМ и АЦП
+    pwm_setup();
+    adc_setup();
+    
+    while (1) {
+        // Читаем значение с потенциометра (0-4095)...
+        uint16_t adc_value = read_adc();
         
-
-            // if (!full) {
-            //     buffer[wr_idx] = static_cast<uint8_t>(data);
-            //     usart_send_blocking(USART2, buffer[wr_idx]);
-
-            //     wr_idx++;
-            //     wr_idx %= SIZE;
-
-            //     if (wr_idx == rd_idx) full = true;
-            // }
+        uint16_t pwm_value = 0;
+        if (adc_value <= 100) {
+            pwm_value = 0;
         }
+        else pwm_value = 700 + (adc_value * 1000) / 4096;
+        
+        // ...и устанавливаем новую скважность
+        timer_set_oc_value(TIM1, TIM_OC1, pwm_value);
+        
+        for (volatile int i = 0; i < 100000; i++);
+    }
+}
+
+// Конфигурация ШИМ-сигнала (с разрешением вывода)
+void pwm_setup(void) {
+    // Включаем тактирование порта E и таймера 1
+    rcc_periph_clock_enable(RCC_GPIOE);
+    rcc_periph_clock_enable(RCC_TIM1);
+    
+    // Настраиваем PE9 (TIM1_CH1) как таймер
+    gpio_mode_setup(GPIOE, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9);
+    gpio_set_af(GPIOE, GPIO_AF1, GPIO9);
+    
+    // Настройка таймера 1
+    timer_set_prescaler(TIM1, 14-1);    // 168 МГц/14 = 12 МГц
+    timer_set_period(TIM1, 1000-1);     // 12 МГц/1000 = 12 кГЦ -- по заданию
+    
+    // Настройка канала 1 в режиме PWM1
+    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM1);
+    timer_set_oc_value(TIM1, TIM_OC1, 0);
+    
+    // Разблокируем вывод таймера, чтобы его сигнал появился на выводе
+    timer_enable_oc_output(TIM1, TIM_OC1);  // включаем выход таймера
+
+    // Даже если включены отдельные каналы, главный выход должен быть разрешен:
+    timer_enable_break_main_output(TIM1);
+    
+    // Включаем счетчик
+    timer_enable_counter(TIM1);
+}
+
+void adc_setup(void) {
+    // Включаем тактирование ADC1 и порта A
+    rcc_periph_clock_enable(RCC_ADC1);
+    rcc_periph_clock_enable(RCC_GPIOA);
+    
+    // Настраиваем PA0 (ADC1_IN0) как аналоговый вход
+    gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO0);
+    
+    // Сбрасываем настройки ADC
+    adc_power_off(ADC1);
+    
+    // Настраиваем параметры ADC
+    // Устанавливаем время выборки сигнала = 56 циклов АЦП
+    adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_56CYC);
+
+    // Устанавливаем 12-битное разрешение (значения 0-4095)
+    adc_set_resolution(ADC1, ADC_CR1_RES_12BIT);
+
+    // Выравниваем результат по правому краю 16-битного регистра
+    adc_set_right_aligned(ADC1);
+    
+    // Режим одиночного преобразования -- АЦП выполняет одно преобразование и останавливается
+    adc_set_single_conversion_mode(ADC1);
+    
+    // Настраиваем регулярную последовательность из 1 канала (Channel 0)
+    adc_set_regular_sequence(ADC1, 1, ADC_CHANNEL0);
+    
+    // Включаем питание преобразователя
+    adc_power_on(ADC1);
+
+    // Маленькая задержка для стабилизации перед преобразованием
+    for (volatile int i = 0; i < 1000; i++);
+}
+
+// Делаем одиночное преобразование и возвращаем результат
+uint16_t read_adc(void) {
+    
+    // АЦП начинает оцифровывать аналоговый сигнал на канале 0
+    adc_start_conversion_regular(ADC1);
+   
+    // "Пока преобразование НЕ завершено..."
+    while (!adc_eoc(ADC1));
+    
+    // Читаем результат
+    return adc_read_regular(ADC1);
 }
