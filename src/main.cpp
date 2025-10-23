@@ -11,7 +11,7 @@ uint16_t read_adc(void);
 
 int main(void) {
     // Настройка тактовой частоты
-    rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
+    rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_180MHZ]);
     
     // Настройка ШИМ и АЦП
     pwm_setup();
@@ -28,7 +28,7 @@ int main(void) {
         else pwm_value = 700 + (adc_value * 1000) / 4096;
         
         // ...и устанавливаем новую скважность
-        timer_set_oc_value(TIM1, TIM_OC1, pwm_value);
+        timer_set_oc_value(TIM1, TIM_OC3, pwm_value);
         
         for (volatile int i = 0; i < 100000; i++);
     }
@@ -37,23 +37,23 @@ int main(void) {
 // Конфигурация ШИМ-сигнала (с разрешением вывода)
 void pwm_setup(void) {
     // Включаем тактирование порта E и таймера 1
-    rcc_periph_clock_enable(RCC_GPIOE);
+    rcc_periph_clock_enable(RCC_GPIOA);
     rcc_periph_clock_enable(RCC_TIM1);
     
-    // Настраиваем PE9 (TIM1_CH1) как таймер
-    gpio_mode_setup(GPIOE, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9);
-    gpio_set_af(GPIOE, GPIO_AF1, GPIO9);
+    // Настраиваем PA10 (TIM1_CH3) как таймер ==> 1 таймер 3 канал 10 кгц
+    gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO10);
+    gpio_set_af(GPIOA, GPIO_AF1, GPIO10);
     
     // Настройка таймера 1
-    timer_set_prescaler(TIM1, 14-1);    // 168 МГц/14 = 12 МГц
-    timer_set_period(TIM1, 1000-1);     // 12 МГц/1000 = 12 кГЦ -- по заданию
+    timer_set_prescaler(TIM1, 18-1);    // 180 МГц/18 = 10 МГц
+    timer_set_period(TIM1, 1000-1);     // 10 МГц/1000 = 10 кГЦ -- по заданию
     
     // Настройка канала 1 в режиме PWM1
-    timer_set_oc_mode(TIM1, TIM_OC1, TIM_OCM_PWM1);
-    timer_set_oc_value(TIM1, TIM_OC1, 0);
+    timer_set_oc_mode(TIM1, TIM_OC3, TIM_OCM_PWM1);
+    timer_set_oc_value(TIM1, TIM_OC3, 0);
     
     // Разблокируем вывод таймера, чтобы его сигнал появился на выводе
-    timer_enable_oc_output(TIM1, TIM_OC1);  // включаем выход таймера
+    timer_enable_oc_output(TIM1, TIM_OC3);  // включаем выход таймера
 
     // Даже если включены отдельные каналы, главный выход должен быть разрешен:
     timer_enable_break_main_output(TIM1);
